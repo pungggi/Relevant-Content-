@@ -1,0 +1,26 @@
+{
+  "name": "semantic-context-pruner",
+  "version": "0.1.0",
+  "description": "Semantic Context Pruner (SCP) middleware for SDL-MCP — prunes and downgrades structurally connected but semantically irrelevant graph nodes to minimize LLM token usage.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "sdl-mcp",
+    "semantic-pruning",
+    "context-window",
+    "llm",
+    "graph"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  }
+}
