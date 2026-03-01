@@ -1,0 +1,25 @@
+{
+  "name": "@scp/core",
+  "version": "0.1.0",
+  "description": "Semantic Context Pruner — scoring engine, types, and pruning middleware for SDL-MCP.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "keywords": ["sdl-mcp", "semantic-pruning", "context", "llm", "graph"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.0"
+  }
+}
