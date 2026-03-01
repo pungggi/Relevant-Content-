@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
-    { "path": "packages/git-collector" }
+    { "path": "packages/git-collector" },
+    { "path": "packages/workitems" }
   ]
 }
