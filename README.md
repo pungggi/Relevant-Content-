@@ -11,10 +11,48 @@ SCP sits as middleware between an AI agent and SDL-MCP's structural graph slices
 | **Negative exemplars** | A-MemGuard, Hard Negatives in RAG | Suppresses nodes too similar to explicitly rejected symbols |
 | **Context payload** | IDE telemetry (Cursor/Copilot pattern) | Ingests Git, IDE, Agent, and External signals as hard boosts and synthetic facets |
 
+## Packages
+
+This is an npm workspaces monorepo with four packages:
+
+| Package | npm name | Description |
+|---------|----------|-------------|
+| [`packages/core`](packages/core) | `@scp/core` | Scoring engine, types, pruner, intent tracker, vector utils |
+| [`packages/git-collector`](packages/git-collector) | `@scp/git-collector` | Collects `GitContext` from local git repos |
+| [`packages/workitems`](packages/workitems) | `@scp/workitems` | Collects `ExternalContext` from Jira, Azure DevOps, GitHub Issues |
+| [`packages/vscode`](packages/vscode) | `scp-vscode` | VS Code extension — IDE collector + orchestrator |
+
+### Dependency graph
+
+```
+                    @scp/core
+                (types + scoring engine)
+                  ▲       ▲       ▲
+                  │       │       │
+    ┌─────────────┤       │       ├──────────────┐
+    │             │       │       │              │
+@scp/git-collector  @scp/workitems         scp-vscode
+  (git signals)    (Jira, ADO, GitHub)   (IDE + orchestrator)
+                                              │
+                              ┌───────────────┤
+                              │               │
+                        uses git-collector  uses workitems
+```
+
 ## Installation
 
 ```bash
-npm install semantic-context-pruner
+npm install @scp/core
+```
+
+For git signal collection:
+```bash
+npm install @scp/git-collector
+```
+
+For work item integration (Jira, ADO, GitHub):
+```bash
+npm install @scp/workitems
 ```
 
 ## Quick start
@@ -26,7 +64,7 @@ import {
   InMemoryVectorStore,
   createLocalEmbedder,
   createHeuristicExpander,
-} from 'semantic-context-pruner';
+} from '@scp/core';
 
 // 1. Set up infrastructure
 const vectorDb = new InMemoryVectorStore();
@@ -52,6 +90,28 @@ tracker.recordFeedback({
 
 // 5. Next round automatically benefits from the drift
 const round2 = await scp.intercept(tracker.getContext(), nextSlice);
+```
+
+### With git and work item context
+
+```typescript
+import { collectGitContext } from '@scp/git-collector';
+import { collectWorkItemContext, createJiraProvider } from '@scp/workitems';
+
+// Collect git signals
+const git = await collectGitContext({ repoPath: '/path/to/repo' });
+
+// Collect work item context (uses branch name to find the active issue)
+const external = await collectWorkItemContext(
+  { providers: [createJiraProvider({ baseUrl: '...', email: '...', apiToken: '...' })] },
+  { branch: git.branch },
+);
+
+// Pass as context payload
+const result = await scp.intercept({
+  ...tracker.getContext(),
+  contextPayload: { git, external },
+}, rawSlice);
 ```
 
 ## Architecture
@@ -254,7 +314,7 @@ const scp = new SCPMiddleware(vectorDb, embed, {
 SCP needs node embeddings in the vector store. The `SCPIndexer` pulls symbols from the SDL-MCP SQLite ledger and keeps embeddings in sync:
 
 ```typescript
-import { SCPIndexer } from 'semantic-context-pruner';
+import { SCPIndexer } from '@scp/core';
 
 const indexer = new SCPIndexer(ledgerReader, vectorDb, embed);
 
@@ -334,11 +394,11 @@ interface VectorClient {
 ## Development
 
 ```bash
-npm install
-npm test           # vitest run
-npm run test:watch # vitest
-npm run build      # tsc
-npm run lint       # tsc --noEmit
+npm install                                    # install all workspace dependencies
+npm run build                                  # tsc -b (builds all packages in order)
+npm test                                       # run tests across all packages
+npm run test --workspace=packages/core         # test a single package
+npm run build --workspace=packages/git-collector  # build a single package
 ```
 
 ## License

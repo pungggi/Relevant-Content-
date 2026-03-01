@@ -1,0 +1,26 @@
+{
+  "name": "@scp/workitems",
+  "version": "0.1.0",
+  "description": "Work item collector for SCP — pulls issues/tasks from Jira, Azure DevOps, and GitHub into ExternalContext.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@scp/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0"
+  }
+}
