@@ -1,6 +1,7 @@
 import type {
   EmbedFn,
   GraphNode,
+  IntentContext,
   SCPConfig,
   ScoredNode,
   VectorClient,
@@ -56,15 +57,16 @@ export class SCPMiddleware {
   /**
    * Intercept an SDL-MCP slice response.
    *
-   * @param userQuery  The original user prompt / task description.
-   * @param rawSlice   The full graph slice returned by SDL-MCP.
+   * Accepts either a plain query string (simple / first-turn usage)
+   * or a full IntentContext (multi-facet, with feedback and negative
+   * exemplars for iterative refinement).
    */
   async intercept(
-    userQuery: string,
+    queryOrIntent: string | IntentContext,
     rawSlice: GraphNode[],
   ): Promise<InterceptResult> {
     const { nodes, scored } = await this.pruner.optimizeSlice(
-      userQuery,
+      queryOrIntent,
       rawSlice,
     );
 

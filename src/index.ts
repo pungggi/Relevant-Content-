@@ -15,6 +15,14 @@
 // Core pruner
 export { SemanticContextPruner } from './core/pruner.js';
 
+// Intent
+export { IntentTracker } from './core/intent-tracker.js';
+export {
+  createHeuristicExpander,
+  createLLMExpander,
+} from './core/query-expander.js';
+export type { ExpandFn } from './core/query-expander.js';
+
 // Middleware
 export { SCPMiddleware } from './middleware/interceptor.js';
 export type { InterceptResult, PruningStats } from './middleware/interceptor.js';
@@ -32,9 +40,17 @@ export { buildEmbeddingInput, createLocalEmbedder } from './utils/embed.js';
 
 // Types
 export type {
+  AgentContext,
+  ContextPayload,
   EmbedFn,
+  ExternalContext,
+  GitContext,
   GraphNode,
+  IDEContext,
+  IntentContext,
+  IntentFacet,
   LedgerSymbol,
+  RoundFeedback,
   SCPConfig,
   ScoredNode,
   SymbolKind,

@@ -78,6 +78,129 @@ export interface LedgerSymbol {
   updatedAt: number; // epoch ms
 }
 
+// ── Intent types ────────────────────────────────────────────────────
+
+/**
+ * A single semantic facet extracted from the user query.
+ *
+ * Example: "Fix the JWT token expiration bug" might decompose into:
+ *   - { text: "JWT token verification",  weight: 1.0 }
+ *   - { text: "token expiration check",  weight: 1.0 }
+ *   - { text: "date/time comparison",    weight: 0.8 }
+ *   - { text: "error handling for expired tokens", weight: 0.7 }
+ */
+export interface IntentFacet {
+  text: string;
+  /** Importance weight in [0, 1]. Defaults to 1.0. */
+  weight: number;
+}
+
+/**
+ * Feedback from a previous pruning round.
+ *
+ * The agent tells us which nodes it actually consumed (positive signal)
+ * and which it ignored or dismissed (negative signal), so subsequent
+ * rounds can drift the intent vector toward what matters.
+ */
+export interface RoundFeedback {
+  /** Node IDs the agent read / used — boost similar nodes. */
+  usedNodeIds: string[];
+  /** Node IDs the agent explicitly dismissed — suppress similar nodes. */
+  dismissedNodeIds: string[];
+}
+
+/**
+ * Full intent context passed to `optimizeSlice`.
+ *
+ * When only a plain string is available (first turn), callers can
+ * still pass just the string — the pruner will auto-expand it.
+ */
+export interface IntentContext {
+  /** Original user prompt (always required). */
+  query: string;
+  /** Decomposed facets.  If empty the pruner auto-generates one facet from `query`. */
+  facets: IntentFacet[];
+  /** Accumulated feedback from prior rounds. */
+  priorFeedback: RoundFeedback[];
+  /** Hard-negative node IDs: any node whose similarity to these exceeds
+   *  `negativeExemplarCeiling` gets its score penalised. */
+  negativeExemplarIds: string[];
+  /** Rich environmental context from IDE, Git, Agent, and external tools. */
+  contextPayload?: ContextPayload;
+}
+
+// ── Context Payload ─────────────────────────────────────────────────
+
+/**
+ * IDE telemetry signals — "immediate focus" from the developer's editor.
+ *
+ * These are non-semantic signals that carry extremely high confidence
+ * about what the developer is currently working on.
+ */
+export interface IDEContext {
+  /** Symbol ID of the node currently under the cursor. */
+  activeNodeId?: string;
+  /** Symbol IDs visible in open editor tabs (the developer's "mental buffer"). */
+  openTabNodeIds?: string[];
+  /** Symbol IDs where the developer has placed debug breakpoints. */
+  breakpointNodeIds?: string[];
+  /** File paths currently visible in the viewport. */
+  visibleFiles?: string[];
+  /** Active linter / type errors: { nodeId, message }. */
+  diagnostics?: Array<{ nodeId: string; message: string }>;
+}
+
+/**
+ * Git / version-control signals — "temporal intent" from recent activity.
+ */
+export interface GitContext {
+  /** Current branch name (often semantic, e.g. "bugfix/jwt-timeout"). */
+  branch?: string;
+  /** File paths with uncommitted changes (dirty working tree). */
+  dirtyFiles?: string[];
+  /** File paths changed in the last N commits. */
+  recentlyChangedFiles?: string[];
+  /** True when the repo is in a merge-conflict state. */
+  isMergeConflict?: boolean;
+  /** File paths containing conflict markers. */
+  conflictFiles?: string[];
+}
+
+/**
+ * Agent internal state — "cognitive intent" from the AI's own reasoning.
+ */
+export interface AgentContext {
+  /** Description of the agent's current plan step. */
+  currentPlanStep?: string;
+  /** The most recent tool error message (highest-priority re-query signal). */
+  lastToolError?: string;
+  /** Summary of what the agent has learned so far (avoids re-fetching). */
+  scratchpadSummary?: string;
+}
+
+/**
+ * External tooling signals — issue trackers, CI/CD, etc.
+ */
+export interface ExternalContext {
+  /** Title + description from the linked issue (Jira / Linear / GitHub). */
+  issueDescription?: string;
+  /** Names of failing CI tests — each becomes a high-weight facet. */
+  failingTestNames?: string[];
+}
+
+/**
+ * Combined context payload from the developer's environment.
+ *
+ * The pruner uses these signals to inject hard boosts and produce
+ * additional facets, going far beyond the text of the user prompt.
+ */
+export interface ContextPayload {
+  ide?: IDEContext;
+  git?: GitContext;
+  agent?: AgentContext;
+  external?: ExternalContext;
+}
+
 // ── Configuration ───────────────────────────────────────────────────
 
 export interface SCPConfig {
@@ -96,6 +219,19 @@ export interface SCPConfig {
   utilityIndegreeCap: number;
   /** Max semantic score for the utility-blackhole heuristic. */
   utilitySemanticCeiling: number;
+  /** Boost multiplier applied to nodes similar to previously-used nodes. */
+  feedbackBoost: number;
+  /** Penalty multiplier applied to nodes similar to dismissed / negative exemplars. */
+  feedbackPenalty: number;
+  /** Similarity ceiling: if a node's similarity to a negative exemplar
+   *  exceeds this, the penalty applies. */
+  negativeExemplarCeiling: number;
+  /** Multiplier for nodes pinned by context payload signals (active file,
+   *  breakpoints, dirty files, etc.). Applied on top of semantic score. */
+  contextPayloadBoost: number;
+  /** Multiplier for nodes in open tabs — weaker than activeNode but
+   *  still a strong signal of developer focus. */
+  contextTabBoost: number;
 }
 
 export const DEFAULT_SCP_CONFIG: SCPConfig = {
@@ -105,4 +241,9 @@ export const DEFAULT_SCP_CONFIG: SCPConfig = {
   skeletonThreshold: 0.40,
   utilityIndegreeCap: 50,
   utilitySemanticCeiling: 0.2,
+  feedbackBoost: 1.25,
+  feedbackPenalty: 0.5,
+  negativeExemplarCeiling: 0.85,
+  contextPayloadBoost: 2.0,
+  contextTabBoost: 1.4,
 };

@@ -1,6 +1,9 @@
 import type {
+  ContextPayload,
   EmbedFn,
   GraphNode,
+  IntentContext,
+  IntentFacet,
   SCPConfig,
   ScoredNode,
   VectorClient,
@@ -14,6 +17,16 @@ import { cosineSimilarity } from '../vector/similarity.js';
  * Evaluates every node in an SDL-MCP graph slice against the agent's
  * query, then keeps / downgrades / drops nodes according to the
  * composite relevance score described in §5 of the specification.
+ *
+ * Intent-enhancement modes:
+ *   1. **Multi-facet scoring** — score each node against multiple
+ *      decomposed intent facets and take the weighted maximum.
+ *   2. **Feedback drift** (Rocchio shift) — boost nodes similar to
+ *      previously-used nodes, penalise dismissed ones.
+ *   3. **Negative exemplars** — hard-suppress nodes too similar to
+ *      explicitly rejected symbols.
+ *   4. **Context payload** — IDE telemetry, Git signals, Agent state,
+ *      and External tooling inject hard boosts and synthetic facets.
  */
 export class SemanticContextPruner {
   private readonly vectorDb: VectorClient;
@@ -33,39 +46,146 @@ export class SemanticContextPruner {
   // ── Public API ──────────────────────────────────────────────────
 
   /**
-   * Main entry point.
+   * Main entry point — accepts either a plain query string
+   * (backwards-compatible) or a full IntentContext.
    *
-   * 1. Embeds the user query.
-   * 2. Fetches vectors for every node in the slice.
-   * 3. Scores each node (semantic × α + structural × β).
-   * 4. Applies the action matrix (full / skeleton / pruned).
-   * 5. Repairs dangling edges left by pruned nodes.
+   * When a plain string is passed, a single-facet context is created
+   * automatically.
    */
   async optimizeSlice(
-    userQuery: string,
+    queryOrIntent: string | IntentContext,
     rawSlice: GraphNode[],
   ): Promise<{ nodes: GraphNode[]; scored: ScoredNode[] }> {
     if (rawSlice.length === 0) return { nodes: [], scored: [] };
 
-    const queryVector = await this.embed(userQuery);
+    // Normalise input to IntentContext.
+    const intent: IntentContext =
+      typeof queryOrIntent === 'string'
+        ? {
+            query: queryOrIntent,
+            facets: [{ text: queryOrIntent, weight: 1.0 }],
+            priorFeedback: [],
+            negativeExemplarIds: [],
+          }
+        : queryOrIntent;
 
-    // Batch-fetch all node vectors in one round trip.
-    const ids = rawSlice.map((n) => n.id);
-    const vectors = await this.vectorDb.getBatch(ids);
-
-    // Pre-compute semantic scores (cosine similarity with query).
-    const semanticScores = new Map<string, number>();
-    for (let i = 0; i < rawSlice.length; i++) {
-      const vec = vectors[i];
-      const sim = vec ? cosineSimilarity(queryVector, vec) : 0;
-      // Cosine similarity is already in [-1,1]; we clamp to [0,1].
-      semanticScores.set(rawSlice[i].id, Math.max(0, sim));
+    // If facets list is empty, fall back to the raw query.
+    if (intent.facets.length === 0) {
+      intent.facets = [{ text: intent.query, weight: 1.0 }];
     }
 
-    // Build an in-degree map for the utility-blackhole heuristic.
+    // ── 0. Extract context payload signals ───────────────────────
+    const payload = intent.contextPayload;
+    const {
+      pinnedNodeIds,
+      tabNodeIds,
+      syntheticFacets,
+      filePathBoosts,
+    } = this.extractPayloadSignals(payload);
+
+    // Merge synthetic facets from context payload into intent facets.
+    const allFacets = [...intent.facets, ...syntheticFacets];
+
+    // ── 1. Embed all facets ──────────────────────────────────────
+    const facetVectors = await Promise.all(
+      allFacets.map((f) => this.embed(f.text)),
+    );
+
+    // ── 2. Batch-fetch all node vectors ──────────────────────────
+    const ids = rawSlice.map((n) => n.id);
+    const nodeVectors = await this.vectorDb.getBatch(ids);
+
+    // ── 3. Compute feedback drift centroids (Rocchio shift) ──────
+    const allUsedIds = intent.priorFeedback.flatMap((f) => f.usedNodeIds);
+    const allDismissedIds = intent.priorFeedback.flatMap(
+      (f) => f.dismissedNodeIds,
+    );
+    const positiveDrift = await this.centroid(allUsedIds);
+    const negativeDrift = await this.centroid([
+      ...allDismissedIds,
+      ...intent.negativeExemplarIds,
+    ]);
+
+    // ── 4. Fetch negative-exemplar vectors ───────────────────────
+    const negExemplarVectors = await this.vectorDb.getBatch(
+      intent.negativeExemplarIds,
+    );
+
+    // ── 5. Score each node ───────────────────────────────────────
+    const semanticScores = new Map<string, number>();
+
+    for (let i = 0; i < rawSlice.length; i++) {
+      const nodeId = rawSlice[i].id;
+      const nodeVec = nodeVectors[i];
+
+      if (!nodeVec) {
+        // No vector available — but context payload can still pin it.
+        const payloadFloor = this.payloadFloor(
+          nodeId,
+          rawSlice[i].filePath,
+          pinnedNodeIds,
+          tabNodeIds,
+          filePathBoosts,
+        );
+        semanticScores.set(nodeId, payloadFloor);
+        continue;
+      }
+
+      // Multi-facet: take the best weighted similarity across all facets.
+      let bestWeightedSim = 0;
+      for (let f = 0; f < facetVectors.length; f++) {
+        const sim = Math.max(0, cosineSimilarity(facetVectors[f], nodeVec));
+        const weighted = sim * allFacets[f].weight;
+        if (weighted > bestWeightedSim) bestWeightedSim = weighted;
+      }
+
+      // Feedback drift adjustment (Rocchio).
+      let driftAdjustment = 1.0;
+      if (positiveDrift) {
+        const posSim = Math.max(
+          0,
+          cosineSimilarity(positiveDrift, nodeVec),
+        );
+        driftAdjustment *= 1.0 + (this.config.feedbackBoost - 1.0) * posSim;
+      }
+      if (negativeDrift) {
+        const negSim = Math.max(
+          0,
+          cosineSimilarity(negativeDrift, nodeVec),
+        );
+        driftAdjustment *= 1.0 - (1.0 - this.config.feedbackPenalty) * negSim;
+      }
+
+      // Negative exemplar hard-suppression.
+      let exemplarPenalty = 1.0;
+      for (const negVec of negExemplarVectors) {
+        if (!negVec) continue;
+        const sim = cosineSimilarity(negVec, nodeVec);
+        if (sim > this.config.negativeExemplarCeiling) {
+          exemplarPenalty *= 1.0 - sim;
+        }
+      }
+
+      // Context payload hard-boosts by node ID and file path.
+      const payloadMultiplier = this.payloadMultiplier(
+        nodeId,
+        rawSlice[i].filePath,
+        pinnedNodeIds,
+        tabNodeIds,
+        filePathBoosts,
+      );
+
+      const finalSemantic =
+        bestWeightedSim *
+        Math.max(0, driftAdjustment) *
+        exemplarPenalty *
+        payloadMultiplier;
+      semanticScores.set(nodeId, Math.min(1, finalSemantic));
+    }
+
+    // ── 6. Composite scoring ─────────────────────────────────────
     const inDegree = this.buildInDegreeMap(rawSlice);
 
-    // Score every node.
     const scored: ScoredNode[] = rawSlice.map((node) => {
       const semScore = semanticScores.get(node.id) ?? 0;
       const structScore = this.neighbourAverage(
@@ -77,8 +197,11 @@ export class SemanticContextPruner {
       let composite = alpha * semScore + beta * structScore;
 
       // §7 — Utility Blackhole: auto-prune high-indegree, low-semantic nodes.
+      // Pinned nodes bypass the blackhole.
       const nodeInDegree = inDegree.get(node.id) ?? 0;
+      const isPinned = pinnedNodeIds.has(node.id);
       if (
+        !isPinned &&
         nodeInDegree > this.config.utilityIndegreeCap &&
         semScore < this.config.utilitySemanticCeiling
       ) {
@@ -99,6 +222,143 @@ export class SemanticContextPruner {
     const repaired = this.repairEdges(optimised);
 
     return { nodes: repaired, scored };
+  }
+
+  // ── Context Payload Processing ─────────────────────────────────
+
+  /**
+   * Extract hard-boost node sets and synthetic facets from the
+   * context payload.
+   */
+  private extractPayloadSignals(payload?: ContextPayload): {
+    pinnedNodeIds: Set<string>;
+    tabNodeIds: Set<string>;
+    syntheticFacets: IntentFacet[];
+    filePathBoosts: Map<string, number>;
+  } {
+    const pinnedNodeIds = new Set<string>();
+    const tabNodeIds = new Set<string>();
+    const syntheticFacets: IntentFacet[] = [];
+    const filePathBoosts = new Map<string, number>();
+
+    if (!payload) {
+      return { pinnedNodeIds, tabNodeIds, syntheticFacets, filePathBoosts };
+    }
+
+    // ── IDE signals ────────────────────────────────────────────
+    const ide = payload.ide;
+    if (ide) {
+      if (ide.activeNodeId) pinnedNodeIds.add(ide.activeNodeId);
+      if (ide.breakpointNodeIds) {
+        for (const id of ide.breakpointNodeIds) pinnedNodeIds.add(id);
+      }
+      if (ide.openTabNodeIds) {
+        for (const id of ide.openTabNodeIds) tabNodeIds.add(id);
+      }
+      if (ide.diagnostics) {
+        for (const diag of ide.diagnostics) {
+          pinnedNodeIds.add(diag.nodeId);
+          syntheticFacets.push({ text: diag.message, weight: 0.9 });
+        }
+      }
+    }
+
+    // ── Git signals ────────────────────────────────────────────
+    const git = payload.git;
+    if (git) {
+      if (git.branch) {
+        // Branch names are often semantic: "bugfix/jwt-timeout" → facet.
+        const branchText = git.branch
+          .replace(/[-_/]/g, ' ')
+          .replace(/\b(feat|fix|bugfix|feature|hotfix|chore|refactor)\b/gi, '')
+          .trim();
+        if (branchText.length > 2) {
+          syntheticFacets.push({ text: branchText, weight: 0.7 });
+        }
+      }
+      if (git.dirtyFiles) {
+        for (const fp of git.dirtyFiles) {
+          filePathBoosts.set(fp, this.config.contextPayloadBoost);
+        }
+      }
+      if (git.isMergeConflict && git.conflictFiles) {
+        for (const fp of git.conflictFiles) {
+          filePathBoosts.set(fp, this.config.contextPayloadBoost);
+        }
+      }
+      if (git.recentlyChangedFiles) {
+        for (const fp of git.recentlyChangedFiles) {
+          if (!filePathBoosts.has(fp)) {
+            filePathBoosts.set(fp, this.config.contextTabBoost);
+          }
+        }
+      }
+    }
+
+    // ── Agent signals ──────────────────────────────────────────
+    const agent = payload.agent;
+    if (agent) {
+      if (agent.lastToolError) {
+        syntheticFacets.push({ text: agent.lastToolError, weight: 0.95 });
+      }
+      if (agent.currentPlanStep) {
+        syntheticFacets.push({ text: agent.currentPlanStep, weight: 0.85 });
+      }
+    }
+
+    // ── External signals ───────────────────────────────────────
+    const ext = payload.external;
+    if (ext) {
+      if (ext.issueDescription) {
+        syntheticFacets.push({ text: ext.issueDescription, weight: 0.8 });
+      }
+      if (ext.failingTestNames) {
+        for (const t of ext.failingTestNames) {
+          syntheticFacets.push({ text: t, weight: 0.9 });
+        }
+      }
+    }
+
+    return { pinnedNodeIds, tabNodeIds, syntheticFacets, filePathBoosts };
+  }
+
+  /**
+   * Compute the score multiplier for a node based on context payload.
+   * Pinned nodes (active file, breakpoints) get contextPayloadBoost,
+   * tab nodes get contextTabBoost, file-path matches get their boost.
+   */
+  private payloadMultiplier(
+    nodeId: string,
+    filePath: string | undefined,
+    pinnedNodeIds: Set<string>,
+    tabNodeIds: Set<string>,
+    filePathBoosts: Map<string, number>,
+  ): number {
+    if (pinnedNodeIds.has(nodeId)) return this.config.contextPayloadBoost;
+    if (tabNodeIds.has(nodeId)) return this.config.contextTabBoost;
+    if (filePath && filePathBoosts.has(filePath)) {
+      return filePathBoosts.get(filePath)!;
+    }
+    return 1.0;
+  }
+
+  /**
+   * Minimum score floor for pinned nodes that have no vector.
+   * Ensures context-pinned nodes are never pruned even without embeddings.
+   */
+  private payloadFloor(
+    nodeId: string,
+    filePath: string | undefined,
+    pinnedNodeIds: Set<string>,
+    tabNodeIds: Set<string>,
+    filePathBoosts: Map<string, number>,
+  ): number {
+    if (pinnedNodeIds.has(nodeId)) return this.config.fullThreshold;
+    if (tabNodeIds.has(nodeId)) return this.config.skeletonThreshold;
+    if (filePath && filePathBoosts.has(filePath)) {
+      return this.config.skeletonThreshold;
+    }
+    return 0;
   }
 
   // ── Internals ───────────────────────────────────────────────────
@@ -182,5 +442,21 @@ export class SemanticContextPruner {
       ...node,
       dependencies: node.dependencies.filter((id) => retainedIds.has(id)),
     }));
+  }
+
+  /** Compute the centroid (average) of a set of node vectors. */
+  private async centroid(ids: string[]): Promise<number[] | null> {
+    if (ids.length === 0) return null;
+    const unique = [...new Set(ids)];
+    const vectors = await this.vectorDb.getBatch(unique);
+    const valid = vectors.filter((v): v is number[] => v !== null);
+    if (valid.length === 0) return null;
+
+    const dim = valid[0].length;
+    const sum = new Float64Array(dim);
+    for (const v of valid) {
+      for (let i = 0; i < dim; i++) sum[i] += v[i];
+    }
+    return Array.from(sum).map((x) => x / valid.length);
   }
 }
