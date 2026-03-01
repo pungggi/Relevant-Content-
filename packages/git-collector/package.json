@@ -1,0 +1,26 @@
+{
+  "name": "@scp/git-collector",
+  "version": "0.1.0",
+  "description": "Git signal collector for SCP — extracts branch, dirty files, recent changes into GitContext.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@scp/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0"
+  }
+}
