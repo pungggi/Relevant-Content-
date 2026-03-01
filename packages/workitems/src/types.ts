@@ -26,3 +26,23 @@ export interface WorkItemQuery {
   /** Explicit work item ID (e.g. "PROJ-123", "AB#456", "#789"). */
   itemId?: string;
 }
+
+/**
+ * Contract every work item provider must satisfy.
+ * Each provider handles auth and API differences internally.
+ */
+export interface WorkItemProvider {
+  readonly name: 'jira' | 'ado' | 'github';
+
+  /**
+   * Attempt to resolve the active work item from contextual hints.
+   * Returns null if no matching item is found.
+   */
+  resolve(query: WorkItemQuery): Promise<WorkItem | null>;
+}
+
+/** Configuration for the work item collector. */
+export interface WorkItemsConfig {
+  /** Providers to try, in priority order. First match wins. */
+  providers: WorkItemProvider[];
+}

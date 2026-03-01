@@ -1,0 +1,64 @@
+{
+  "name": "scp-vscode",
+  "displayName": "SCP — Semantic Context Pruner",
+  "version": "0.1.0",
+  "description": "VS Code extension that feeds IDE, Git, and work item signals into SCP for intelligent context pruning.",
+  "publisher": "scp",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "dist/extension.js",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "tsc --noEmit",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@scp/core": "*",
+    "@scp/git-collector": "*",
+    "@scp/workitems": "*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.11.0"
+  },
+  "contributes": {
+    "configuration": {
+      "title": "SCP",
+      "properties": {
+        "scp.workitems.provider": {
+          "type": "string",
+          "enum": ["jira", "ado", "github", "none"],
+          "default": "none",
+          "description": "Which work item provider to use."
+        },
+        "scp.workitems.jira.baseUrl": {
+          "type": "string",
+          "description": "Jira base URL (e.g. https://myorg.atlassian.net)"
+        },
+        "scp.workitems.jira.email": {
+          "type": "string",
+          "description": "Jira account email"
+        },
+        "scp.workitems.ado.orgUrl": {
+          "type": "string",
+          "description": "Azure DevOps org URL"
+        },
+        "scp.workitems.ado.project": {
+          "type": "string",
+          "description": "Azure DevOps project name"
+        },
+        "scp.workitems.github.owner": {
+          "type": "string",
+          "description": "GitHub repository owner"
+        },
+        "scp.workitems.github.repo": {
+          "type": "string",
+          "description": "GitHub repository name"
+        }
+      }
+    }
+  }
+}

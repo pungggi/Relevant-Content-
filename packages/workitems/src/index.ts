@@ -1,30 +1,18 @@
 import type { ExternalContext } from '@scp/core';
-import type { WorkItem, WorkItemQuery } from './types.js';
+import type { WorkItemQuery, WorkItemsConfig } from './types.js';
 import { toExternalContext } from './mapper.js';
 
 // Re-export types for consumers
-export type { WorkItem, WorkItemQuery } from './types.js';
+export type { WorkItem, WorkItemQuery, WorkItemProvider, WorkItemsConfig } from './types.js';
 export { toExternalContext } from './mapper.js';
 
-/**
- * Contract every work item provider must satisfy.
- * Each provider handles auth and API differences internally.
- */
-export interface WorkItemProvider {
-  readonly name: 'jira' | 'ado' | 'github';
-
-  /**
-   * Attempt to resolve the active work item from contextual hints.
-   * Returns null if no matching item is found.
-   */
-  resolve(query: WorkItemQuery): Promise<WorkItem | null>;
-}
-
-/** Configuration for the work item collector. */
-export interface WorkItemsConfig {
-  /** Providers to try, in priority order. First match wins. */
-  providers: WorkItemProvider[];
-}
+// Re-export provider factories and configs
+export { createJiraProvider } from './providers/jira.js';
+export type { JiraConfig } from './providers/jira.js';
+export { createAdoProvider } from './providers/ado.js';
+export type { AdoConfig } from './providers/ado.js';
+export { createGitHubProvider } from './providers/github.js';
+export type { GitHubConfig } from './providers/github.js';
 
 /**
  * Collect work item context from configured providers.

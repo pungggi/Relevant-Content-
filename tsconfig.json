@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/git-collector" },
-    { "path": "packages/workitems" }
+    { "path": "packages/workitems" },
+    { "path": "packages/vscode" }
   ]
 }

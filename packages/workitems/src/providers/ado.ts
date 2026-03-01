@@ -1,5 +1,4 @@
-import type { WorkItemProvider } from '../index.js';
-import type { WorkItem, WorkItemQuery } from '../types.js';
+import type { WorkItemProvider, WorkItem, WorkItemQuery } from '../types.js';
 
 export interface AdoConfig {
   /** Azure DevOps organisation URL (e.g. "https://dev.azure.com/myorg"). */

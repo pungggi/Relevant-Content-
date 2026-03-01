@@ -1,5 +1,4 @@
-import type { WorkItemProvider } from '../index.js';
-import type { WorkItem, WorkItemQuery } from '../types.js';
+import type { WorkItemProvider, WorkItem, WorkItemQuery } from '../types.js';
 
 export interface GitHubConfig {
   /** Repository owner (user or organisation). */
