@@ -13,14 +13,14 @@
   "keywords": [
     "sdl-mcp",
     "semantic-pruning",
-    "context-window",
+    "context",
     "llm",
     "graph"
   ],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "typescript": "^5.3.3",
-    "vitest": "^1.2.0"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }
