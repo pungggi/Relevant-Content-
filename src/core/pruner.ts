@@ -46,28 +46,17 @@ export class SemanticContextPruner {
   // ── Public API ──────────────────────────────────────────────────
 
   /**
-   * Main entry point — accepts either a plain query string
-   * (backwards-compatible) or a full IntentContext.
+   * Main entry point.
    *
-   * When a plain string is passed, a single-facet context is created
-   * automatically.
+   * Requires a full {@link IntentContext} with decomposed facets,
+   * optional feedback history, negative exemplars, and context payload.
+   * Use {@link IntentTracker.getContext()} or build one manually.
    */
   async optimizeSlice(
-    queryOrIntent: string | IntentContext,
+    intent: IntentContext,
     rawSlice: GraphNode[],
   ): Promise<{ nodes: GraphNode[]; scored: ScoredNode[] }> {
     if (rawSlice.length === 0) return { nodes: [], scored: [] };
-
-    // Normalise input to IntentContext.
-    const intent: IntentContext =
-      typeof queryOrIntent === 'string'
-        ? {
-            query: queryOrIntent,
-            facets: [{ text: queryOrIntent, weight: 1.0 }],
-            priorFeedback: [],
-            negativeExemplarIds: [],
-          }
-        : queryOrIntent;
 
     // If facets list is empty, fall back to the raw query.
     if (intent.facets.length === 0) {

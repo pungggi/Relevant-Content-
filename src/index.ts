@@ -1,16 +1,8 @@
 // ── Public API ──────────────────────────────────────────────────────
 //
-// Semantic Context Pruner (SCP) for SDL-MCP
+// Semantic Context Pruner (SCP) — Active Retrieval Engine for SDL-MCP
 //
-// Usage:
-//   import { SCPMiddleware, InMemoryVectorStore, createLocalEmbedder } from 'semantic-context-pruner';
-//
-//   const vectorDb = new InMemoryVectorStore();
-//   const embed    = createLocalEmbedder();
-//   const scp      = new SCPMiddleware(vectorDb, embed);
-//
-//   const result   = await scp.intercept(userQuery, rawGraphSlice);
-//
+// See README.md for full usage.
 
 // Core pruner
 export { SemanticContextPruner } from './core/pruner.js';

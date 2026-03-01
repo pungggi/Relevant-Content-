@@ -3,6 +3,7 @@ import { SCPMiddleware } from '../src/middleware/interceptor.js';
 import { InMemoryVectorStore } from '../src/vector/in-memory-store.js';
 import { createLocalEmbedder } from '../src/utils/embed.js';
 import type { GraphNode } from '../src/types/index.js';
+import { intent } from './helpers.js';
 
 function node(
   id: string,
@@ -44,7 +45,10 @@ describe('SCPMiddleware', () => {
       node('css', 'applyGrid', [], 'function applyGrid() { setCSSGrid(); }'),
     ];
 
-    const result = await middleware.intercept('fix JWT auth bug', slice);
+    const result = await middleware.intercept(
+      intent('fix JWT auth bug'),
+      slice,
+    );
 
     expect(result.stats.inputNodeCount).toBe(2);
     // At least one should be kept or pruned
@@ -57,7 +61,10 @@ describe('SCPMiddleware', () => {
     await store.upsert('db', vec);
 
     const slice = [node('db', 'getConnection')];
-    const result = await middleware.intercept('database connection pool', slice);
+    const result = await middleware.intercept(
+      intent('database connection pool'),
+      slice,
+    );
 
     // Every node in optimisedSlice should exist in scored
     for (const n of result.optimisedSlice) {
@@ -66,7 +73,7 @@ describe('SCPMiddleware', () => {
   });
 
   it('handles empty slices gracefully', async () => {
-    const result = await middleware.intercept('anything', []);
+    const result = await middleware.intercept(intent('anything'), []);
 
     expect(result.optimisedSlice).toEqual([]);
     expect(result.stats.inputNodeCount).toBe(0);

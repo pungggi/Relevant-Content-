@@ -4,6 +4,7 @@ import { InMemoryVectorStore } from '../src/vector/in-memory-store.js';
 import { createLocalEmbedder } from '../src/utils/embed.js';
 import type { GraphNode } from '../src/types/index.js';
 import { RelevanceTier } from '../src/types/index.js';
+import { intent } from './helpers.js';
 
 /**
  * Helper: build a minimal graph node.
@@ -37,7 +38,10 @@ describe('SemanticContextPruner', () => {
   });
 
   it('returns empty output for empty input', async () => {
-    const { nodes, scored } = await pruner.optimizeSlice('any query', []);
+    const { nodes, scored } = await pruner.optimizeSlice(
+      intent('any query'),
+      [],
+    );
     expect(nodes).toEqual([]);
     expect(scored).toEqual([]);
   });
@@ -56,7 +60,7 @@ describe('SemanticContextPruner', () => {
     });
 
     const { nodes, scored } = await fullPruner.optimizeSlice(
-      'function verifyJwtToken',
+      intent('function verifyJwtToken'),
       slice,
     );
 
@@ -74,7 +78,7 @@ describe('SemanticContextPruner', () => {
     const slice = [node('ui-1', 'renderTable')];
 
     const { nodes } = await pruner.optimizeSlice(
-      'fix JWT token expiration bug in auth service',
+      intent('fix JWT token expiration bug in auth service'),
       slice,
     );
 
@@ -96,7 +100,7 @@ describe('SemanticContextPruner', () => {
     });
 
     const { nodes } = await customPruner.optimizeSlice(
-      'function handleRequest middleware HTTP',
+      intent('function handleRequest middleware HTTP'),
       slice,
     );
 
@@ -123,7 +127,7 @@ describe('SemanticContextPruner', () => {
 
     // B's structural score should be boosted by its connection to C
     const { scored } = await pruner.optimizeSlice(
-      'fix JWT token expiration bug',
+      intent('fix JWT token expiration bug'),
       slice,
     );
 
@@ -153,7 +157,10 @@ describe('SemanticContextPruner', () => {
       skeletonThreshold: 0.2,
     });
 
-    const { nodes } = await repairPruner.optimizeSlice(keepText, slice);
+    const { nodes } = await repairPruner.optimizeSlice(
+      intent(keepText),
+      slice,
+    );
 
     // 'keep' should survive; 'drop' should be pruned
     const kept = nodes.find((n) => n.id === 'keep');
@@ -183,7 +190,7 @@ describe('SemanticContextPruner', () => {
     });
 
     const { scored } = await customPruner.optimizeSlice(
-      'fix JWT authentication token bug',
+      intent('fix JWT authentication token bug'),
       slice,
     );
 
@@ -197,7 +204,10 @@ describe('SemanticContextPruner', () => {
     // Don't index anything — all vectors will be null
     const slice = [node('x', 'mystery')];
 
-    const { nodes, scored } = await pruner.optimizeSlice('any query', slice);
+    const { nodes, scored } = await pruner.optimizeSlice(
+      intent('any query'),
+      slice,
+    );
 
     // Should get a score of 0 (no vector → similarity 0)
     expect(scored[0].semanticScore).toBe(0);

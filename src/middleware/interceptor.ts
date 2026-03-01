@@ -57,16 +57,16 @@ export class SCPMiddleware {
   /**
    * Intercept an SDL-MCP slice response.
    *
-   * Accepts either a plain query string (simple / first-turn usage)
-   * or a full IntentContext (multi-facet, with feedback and negative
-   * exemplars for iterative refinement).
+   * @param intent   Full IntentContext with facets, feedback, negative
+   *                 exemplars, and optional context payload.
+   * @param rawSlice The raw graph slice returned by SDL-MCP.
    */
   async intercept(
-    queryOrIntent: string | IntentContext,
+    intent: IntentContext,
     rawSlice: GraphNode[],
   ): Promise<InterceptResult> {
     const { nodes, scored } = await this.pruner.optimizeSlice(
-      queryOrIntent,
+      intent,
       rawSlice,
     );
 

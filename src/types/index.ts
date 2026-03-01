@@ -110,10 +110,10 @@ export interface RoundFeedback {
 }
 
 /**
- * Full intent context passed to `optimizeSlice`.
+ * Full intent context passed to `optimizeSlice` and `intercept`.
  *
- * When only a plain string is available (first turn), callers can
- * still pass just the string — the pruner will auto-expand it.
+ * Construct via {@link IntentTracker.getContext()} for multi-turn
+ * sessions, or build manually for single-shot usage.
  */
 export interface IntentContext {
   /** Original user prompt (always required). */

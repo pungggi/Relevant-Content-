@@ -4,6 +4,7 @@ import { InMemoryVectorStore } from '../src/vector/in-memory-store.js';
 import { createLocalEmbedder } from '../src/utils/embed.js';
 import type { GraphNode, IntentContext } from '../src/types/index.js';
 import { RelevanceTier } from '../src/types/index.js';
+import { intent } from './helpers.js';
 
 function node(
   id: string,
@@ -44,7 +45,7 @@ describe('Multi-facet scoring (Max-Score approach)', () => {
 
     const slice = [node('redis-1', 'redisConnect')];
 
-    const intent: IntentContext = {
+    const ctx: IntentContext = {
       query: 'Update JWT validator to use Redis cache and handle missing user',
       facets: [
         { text: 'JWT token validation logic', weight: 1.0 },
@@ -55,23 +56,23 @@ describe('Multi-facet scoring (Max-Score approach)', () => {
       negativeExemplarIds: [],
     };
 
-    const { scored } = await pruner.optimizeSlice(intent, slice);
+    const { scored } = await pruner.optimizeSlice(ctx, slice);
 
     // With multi-facet, the Redis node should score well because it
     // matches the Redis facet, even though it doesn't match JWT or error facets.
     expect(scored[0].semanticScore).toBeGreaterThan(0);
   });
 
-  it('multi-facet produces higher scores than a single averaged query', async () => {
+  it('multi-facet produces higher scores than a single-facet query', async () => {
     // The node only matches one dimension of a compound task
     const authVec = await embed('JWT authentication token verifier');
     await store.upsert('auth-1', authVec);
 
     const slice = [node('auth-1', 'verifyJwt')];
 
-    // Single-query approach (the compound sentence averages all intents)
-    const singleQueryResult = await pruner.optimizeSlice(
-      'Update JWT validator to use Redis cache and handle missing user gracefully',
+    // Single-facet approach (the compound sentence averages all intents)
+    const singleFacetResult = await pruner.optimizeSlice(
+      intent('Update JWT validator to use Redis cache and handle missing user gracefully'),
       slice,
     );
 
@@ -92,7 +93,7 @@ describe('Multi-facet scoring (Max-Score approach)', () => {
 
     // The dedicated JWT facet should yield a higher score for the auth node.
     expect(multiFacetResult.scored[0].semanticScore).toBeGreaterThanOrEqual(
-      singleQueryResult.scored[0].semanticScore,
+      singleFacetResult.scored[0].semanticScore,
     );
   });
 
@@ -103,34 +104,42 @@ describe('Multi-facet scoring (Max-Score approach)', () => {
     const slice = [node('err-1', 'handleMissingUser')];
 
     const highWeight = await pruner.optimizeSlice(
-      {
-        query: 'fix bug',
+      intent('fix bug', {
         facets: [
           { text: 'fix bug', weight: 0.1 },
           { text: 'error handling for missing user', weight: 1.0 },
         ],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-      },
+      }),
       slice,
     );
 
     const lowWeight = await pruner.optimizeSlice(
-      {
-        query: 'fix bug',
+      intent('fix bug', {
         facets: [
           { text: 'fix bug', weight: 0.1 },
           { text: 'error handling for missing user', weight: 0.3 },
         ],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-      },
+      }),
       slice,
     );
 
     expect(highWeight.scored[0].semanticScore).toBeGreaterThanOrEqual(
       lowWeight.scored[0].semanticScore,
     );
+  });
+
+  it('falls back to query when facets array is empty', async () => {
+    const vec = await embed('fix the auth bug');
+    await store.upsert('auth-1', vec);
+
+    const slice = [node('auth-1', 'fixAuth')];
+
+    const { scored } = await pruner.optimizeSlice(
+      intent('fix the auth bug', { facets: [] }),
+      slice,
+    );
+
+    expect(scored[0].semanticScore).toBeGreaterThan(0);
   });
 });
 
@@ -162,16 +171,16 @@ describe('Feedback drift (Rocchio shift)', () => {
     const slice = [node('similar-1', 'checkTokenExpiry')];
 
     // Without feedback
-    const noFeedback = await pruner.optimizeSlice('fix auth', slice);
+    const noFeedback = await pruner.optimizeSlice(
+      intent('fix auth'),
+      slice,
+    );
 
     // With positive feedback from used node
     const withFeedback = await pruner.optimizeSlice(
-      {
-        query: 'fix auth',
-        facets: [{ text: 'fix auth', weight: 1.0 }],
+      intent('fix auth', {
         priorFeedback: [{ usedNodeIds: ['used-1'], dismissedNodeIds: [] }],
-        negativeExemplarIds: [],
-      },
+      }),
       slice,
     );
 
@@ -193,16 +202,16 @@ describe('Feedback drift (Rocchio shift)', () => {
     const slice = [node('css-1', 'applyFlexbox')];
 
     // Without feedback
-    const noFeedback = await pruner.optimizeSlice('fix CSS layout', slice);
+    const noFeedback = await pruner.optimizeSlice(
+      intent('fix CSS layout'),
+      slice,
+    );
 
     // With negative feedback
     const withFeedback = await pruner.optimizeSlice(
-      {
-        query: 'fix CSS layout',
-        facets: [{ text: 'fix CSS layout', weight: 1.0 }],
+      intent('fix CSS layout', {
         priorFeedback: [{ usedNodeIds: [], dismissedNodeIds: ['dismissed-1'] }],
-        negativeExemplarIds: [],
-      },
+      }),
       slice,
     );
 
@@ -240,16 +249,16 @@ describe('Negative exemplars', () => {
     const slice = [node('similar-legacy', 'legacyValidateV1')];
 
     // Without negative exemplar
-    const noExemplar = await pruner.optimizeSlice('auth token validation', slice);
+    const noExemplar = await pruner.optimizeSlice(
+      intent('auth token validation'),
+      slice,
+    );
 
     // With negative exemplar
     const withExemplar = await pruner.optimizeSlice(
-      {
-        query: 'auth token validation',
-        facets: [{ text: 'auth token validation', weight: 1.0 }],
-        priorFeedback: [],
+      intent('auth token validation', {
         negativeExemplarIds: ['legacy-1'],
-      },
+      }),
       slice,
     );
 
@@ -278,15 +287,9 @@ describe('Context payload integration', () => {
     const slice = [node('active-1', 'currentlyEditing')];
 
     const { scored } = await pruner.optimizeSlice(
-      {
-        query: 'fix something',
-        facets: [{ text: 'fix something', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-        contextPayload: {
-          ide: { activeNodeId: 'active-1' },
-        },
-      },
+      intent('fix something', {
+        contextPayload: { ide: { activeNodeId: 'active-1' } },
+      }),
       slice,
     );
 
@@ -302,19 +305,13 @@ describe('Context payload integration', () => {
     const slice = [node('bp-1', 'debugTarget')];
 
     // Without breakpoint context
-    const noBP = await pruner.optimizeSlice('investigate error', slice);
+    const noBP = await pruner.optimizeSlice(intent('investigate error'), slice);
 
     // With breakpoint context (pinned)
     const withBP = await pruner.optimizeSlice(
-      {
-        query: 'investigate error',
-        facets: [{ text: 'investigate error', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-        contextPayload: {
-          ide: { breakpointNodeIds: ['bp-1'] },
-        },
-      },
+      intent('investigate error', {
+        contextPayload: { ide: { breakpointNodeIds: ['bp-1'] } },
+      }),
       slice,
     );
 
@@ -329,18 +326,12 @@ describe('Context payload integration', () => {
 
     const slice = [node('tab-1', 'helperUtil')];
 
-    const noTabs = await pruner.optimizeSlice('fix bug', slice);
+    const noTabs = await pruner.optimizeSlice(intent('fix bug'), slice);
 
     const withTabs = await pruner.optimizeSlice(
-      {
-        query: 'fix bug',
-        facets: [{ text: 'fix bug', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-        contextPayload: {
-          ide: { openTabNodeIds: ['tab-1'] },
-        },
-      },
+      intent('fix bug', {
+        contextPayload: { ide: { openTabNodeIds: ['tab-1'] } },
+      }),
       slice,
     );
 
@@ -355,18 +346,12 @@ describe('Context payload integration', () => {
 
     const slice = [node('dirty-1', 'validate', [], { filePath: 'src/auth/validator.ts' })];
 
-    const noGit = await pruner.optimizeSlice('fix auth', slice);
+    const noGit = await pruner.optimizeSlice(intent('fix auth'), slice);
 
     const withGit = await pruner.optimizeSlice(
-      {
-        query: 'fix auth',
-        facets: [{ text: 'fix auth', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-        contextPayload: {
-          git: { dirtyFiles: ['src/auth/validator.ts'] },
-        },
-      },
+      intent('fix auth', {
+        contextPayload: { git: { dirtyFiles: ['src/auth/validator.ts'] } },
+      }),
       slice,
     );
 
@@ -381,20 +366,14 @@ describe('Context payload integration', () => {
 
     const slice = [node('jwt-1', 'refreshTokenLoop')];
 
-    const noBranch = await pruner.optimizeSlice('fix the bug', slice);
+    const noBranch = await pruner.optimizeSlice(intent('fix the bug'), slice);
 
     // The branch name "bugfix/token-refresh-loop" should inject
     // "token refresh loop" as a synthetic facet
     const withBranch = await pruner.optimizeSlice(
-      {
-        query: 'fix the bug',
-        facets: [{ text: 'fix the bug', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-        contextPayload: {
-          git: { branch: 'bugfix/token-refresh-loop' },
-        },
-      },
+      intent('fix the bug', {
+        contextPayload: { git: { branch: 'bugfix/token-refresh-loop' } },
+      }),
       slice,
     );
 
@@ -409,18 +388,14 @@ describe('Context payload integration', () => {
 
     const slice = [node('import-1', 'importResolver')];
 
-    const noError = await pruner.optimizeSlice('fix build', slice);
+    const noError = await pruner.optimizeSlice(intent('fix build'), slice);
 
     const withError = await pruner.optimizeSlice(
-      {
-        query: 'fix build',
-        facets: [{ text: 'fix build', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
+      intent('fix build', {
         contextPayload: {
           agent: { lastToolError: 'Compile Error: Missing import X' },
         },
-      },
+      }),
       slice,
     );
 
@@ -435,18 +410,14 @@ describe('Context payload integration', () => {
 
     const slice = [node('test-1', 'testAuthTimeout')];
 
-    const noTests = await pruner.optimizeSlice('fix CI', slice);
+    const noTests = await pruner.optimizeSlice(intent('fix CI'), slice);
 
     const withTests = await pruner.optimizeSlice(
-      {
-        query: 'fix CI',
-        facets: [{ text: 'fix CI', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
+      intent('fix CI', {
         contextPayload: {
           external: { failingTestNames: ['test_auth_timeout'] },
         },
-      },
+      }),
       slice,
     );
 
@@ -462,11 +433,7 @@ describe('Context payload integration', () => {
     const slice = [node('diag-1', 'getUserProp')];
 
     const { scored } = await pruner.optimizeSlice(
-      {
-        query: 'fix error',
-        facets: [{ text: 'fix error', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
+      intent('fix error', {
         contextPayload: {
           ide: {
             diagnostics: [
@@ -474,7 +441,7 @@ describe('Context payload integration', () => {
             ],
           },
         },
-      },
+      }),
       slice,
     );
 
@@ -507,72 +474,14 @@ describe('Context payload integration', () => {
     });
 
     const { scored } = await customPruner.optimizeSlice(
-      {
-        query: 'investigate logging',
-        facets: [{ text: 'investigate logging', weight: 1.0 }],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-        contextPayload: {
-          ide: { activeNodeId: 'logger' },
-        },
-      },
+      intent('investigate logging', {
+        contextPayload: { ide: { activeNodeId: 'logger' } },
+      }),
       slice,
     );
 
     const loggerScored = scored.find((s) => s.node.id === 'logger')!;
     // Pinned node bypasses blackhole — composite should not be forced to 0
     expect(loggerScored.compositeScore).toBeGreaterThan(0);
-  });
-});
-
-describe('Backwards compatibility', () => {
-  let store: InMemoryVectorStore;
-  let embed: ReturnType<typeof createLocalEmbedder>;
-  let pruner: SemanticContextPruner;
-
-  beforeEach(() => {
-    store = new InMemoryVectorStore();
-    embed = createLocalEmbedder(64);
-    pruner = new SemanticContextPruner(store, embed);
-  });
-
-  it('still accepts a plain string query', async () => {
-    const vec = await embed('function verifyJwtToken');
-    await store.upsert('jwt-1', vec);
-
-    const slice = [node('jwt-1', 'verifyJwtToken')];
-
-    const { scored } = await pruner.optimizeSlice(
-      'function verifyJwtToken',
-      slice,
-    );
-
-    expect(scored).toHaveLength(1);
-    expect(scored[0].semanticScore).toBeGreaterThan(0);
-  });
-
-  it('returns empty for empty slice with string query', async () => {
-    const { nodes, scored } = await pruner.optimizeSlice('anything', []);
-    expect(nodes).toEqual([]);
-    expect(scored).toEqual([]);
-  });
-
-  it('falls back to query when facets are empty', async () => {
-    const vec = await embed('fix the auth bug');
-    await store.upsert('auth-1', vec);
-
-    const slice = [node('auth-1', 'fixAuth')];
-
-    const { scored } = await pruner.optimizeSlice(
-      {
-        query: 'fix the auth bug',
-        facets: [],
-        priorFeedback: [],
-        negativeExemplarIds: [],
-      },
-      slice,
-    );
-
-    expect(scored[0].semanticScore).toBeGreaterThan(0);
   });
 });
